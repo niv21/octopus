@@ -1,0 +1,642 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<meta name="theme-color" content="#2b2f26" />
+<title>OCTOPUS — LCD Diver</title>
+
+<!-- =====================================================================
+     OCTOPUS — a single-file LCD handheld game.
+     Inspired by 1980s Game & Watch / Elektronika "Octopus" handhelds.
+     Pure HTML + CSS + vanilla JS. No libraries. Open the file and play.
+
+     Sections:
+       1. STYLE   - device shell, LCD aesthetic, sprites, HUD, controls
+       2. MARKUP  - the handheld device and its screen
+       3. SCRIPT  - config, state machine, game loop, input, audio
+     ===================================================================== -->
+
+<style>
+/* ----------------------------------------------------------------------
+   1. STYLE
+   The look: dark "segments" printed on a pale green-grey LCD. Every
+   possible sprite position is faintly visible (LCD "ghost" segments),
+   and only the active ones light up to full darkness.
+   ---------------------------------------------------------------------- */
+
+:root{
+  --lcd:        #aab79a;   /* light green-grey LCD background        */
+  --lcd-edge:   #95a384;   /* slightly darker LCD toward the edges   */
+  --seg:        #1c241a;   /* dark "on" segment colour               */
+  --ghost:      rgba(28,36,26,0.10); /* faint always-printed segment */
+  --shell:      #3a3f33;   /* handheld plastic body                  */
+  --shell-hi:   #4d5443;
+  --shell-lo:   #23271f;
+  --accent:     #c9d36b;   /* a touch of period-correct yellow-green */
+}
+
+*{ box-sizing:border-box; margin:0; padding:0; -webkit-tap-highlight-color:transparent; }
+
+html,body{
+  height:100%;
+  background:
+    radial-gradient(120% 120% at 50% 0%, #1c2030 0%, #0c0e15 60%, #060709 100%);
+  font-family:"Courier New",ui-monospace,monospace;
+  color:#e7ecd8;
+  display:flex; align-items:center; justify-content:center;
+  overflow:hidden;
+  user-select:none; -webkit-user-select:none;
+}
+
+/* ---- The handheld device shell ---- */
+.device{
+  width:min(95vw, 430px);
+  background:linear-gradient(160deg,var(--shell-hi),var(--shell) 45%,var(--shell-lo));
+  border-radius:26px;
+  padding:16px 16px 20px;
+  box-shadow:
+    0 22px 50px rgba(0,0,0,.55),
+    inset 0 2px 0 rgba(255,255,255,.08),
+    inset 0 -4px 10px rgba(0,0,0,.5);
+  position:relative;
+}
+
+.brandbar{
+  display:flex; align-items:center; justify-content:space-between;
+  padding:2px 6px 10px;
+}
+.brand{
+  font-weight:bold; letter-spacing:3px; font-size:14px;
+  color:var(--accent); text-shadow:0 1px 0 rgba(0,0,0,.5);
+}
+.brand small{ display:block; letter-spacing:2px; font-size:8px; color:#9aa089; }
+
+.sysbtn{
+  font-family:inherit; font-size:11px; letter-spacing:1px;
+  color:#c7cdb6; background:#2b2f26;
+  border:1px solid #1c1f18; border-radius:8px;
+  padding:5px 9px; cursor:pointer;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.06), 0 2px 3px rgba(0,0,0,.4);
+}
+.sysbtn:active{ transform:translateY(1px); }
+
+/* ---- The LCD screen ---- */
+.screen{
+  background:#7c8a6c;
+  border-radius:12px;
+  padding:10px;
+  box-shadow:inset 0 3px 10px rgba(0,0,0,.55), 0 1px 0 rgba(255,255,255,.05);
+}
+.lcd{
+  position:relative;
+  width:100%;
+  aspect-ratio:5 / 6;
+  background:
+    radial-gradient(130% 130% at 50% 30%, var(--lcd) 55%, var(--lcd-edge) 100%);
+  border-radius:6px;
+  overflow:hidden;
+  color:var(--seg);              /* sprites use currentColor */
+  box-shadow:inset 0 0 0 1px rgba(0,0,0,.18);
+}
+
+/* LCD scanline + glare overlay for that liquid-crystal feel */
+.lcd::after{
+  content:""; position:absolute; inset:0; pointer-events:none;
+  background:
+    linear-gradient(rgba(255,255,255,.05), rgba(0,0,0,.05)),
+    repeating-linear-gradient(0deg, rgba(0,0,0,.05) 0 1px, transparent 1px 3px);
+  mix-blend-mode:multiply;
+  animation:flicker 5s infinite steps(1);
+}
+@keyframes flicker{ 0%,97%{opacity:.9} 98%{opacity:.78} 99%{opacity:.95} 100%{opacity:.9} }
+
+/* ---- Scene decorations (always faintly printed) ---- */
+.deco{ position:absolute; color:var(--seg); opacity:.16; pointer-events:none; }
+.surface{ left:0; right:0; top:8%; height:2px;
+  background:repeating-linear-gradient(90deg,var(--seg) 0 8px,transparent 8px 16px); }
+.seabed{ left:0; right:0; bottom:4%; height:2px;
+  background:repeating-linear-gradient(90deg,var(--seg) 0 5px,transparent 5px 9px); }
+
+/* ---- Generic sprite: fixed position, no smooth movement ---- */
+.sprite{
+  position:absolute;
+  transform:translate(-50%,-50%);
+  transition:none;            /* discrete, segment-style switching */
+  display:flex; align-items:center; justify-content:center;
+}
+.sprite svg{ width:100%; height:100%; display:block; }
+
+/* Ghost (printed but unlit) vs lit (active) segments */
+.ghost{ opacity:.11; }
+.lit{   opacity:1; }
+.diverGhost{ opacity:0; }       /* diver positions are hidden until active */
+.diverGhost.faint{ opacity:.10; }   /* faint hint printed at the boat slot   */
+.diverGhost.active{ opacity:1; }    /* (last, so it always wins over .faint)  */
+
+/* Static scene objects are always fully lit */
+.solid{ opacity:1; }
+
+/* ---- HUD: score / hi / lives ---- */
+.hud{
+  position:absolute; inset:0; pointer-events:none;
+  font-weight:bold; color:var(--seg);
+}
+.hud .row{
+  position:absolute; top:2.5%; left:4%; right:4%;
+  display:flex; justify-content:space-between; align-items:center;
+  font-size:clamp(10px,3.4vw,15px); letter-spacing:1px;
+}
+.lives{
+  position:absolute; top:8.5%; left:4%;
+  display:flex; gap:3px;
+}
+.lives .lifeIcon{ width:clamp(10px,3.2vw,15px); height:clamp(12px,3.8vw,17px); color:var(--seg); }
+.lives .lifeIcon.spent{ opacity:.13; }
+
+/* "MISS" indicator that blinks on a mistake */
+.miss{
+  position:absolute; top:8.5%; right:4%;
+  font-size:clamp(10px,3vw,14px); letter-spacing:2px;
+  color:var(--seg); opacity:0;
+}
+.miss.show{ animation:missblink .9s steps(1) 3; }
+@keyframes missblink{ 50%{opacity:1} }
+
+/* ---- Centre banner for START / GAME OVER ---- */
+.banner{
+  position:absolute; inset:0; display:flex; flex-direction:column;
+  align-items:center; justify-content:center; text-align:center;
+  color:var(--seg); padding:8% 10%; gap:8px; cursor:pointer;
+}
+.banner.hidden{ display:none; }
+.banner h1{ font-size:clamp(20px,7vw,34px); letter-spacing:4px; }
+.banner p{ font-size:clamp(10px,3.4vw,15px); line-height:1.5; letter-spacing:1px; }
+.banner .blink{ animation:bannerblink 1s steps(1) infinite; }
+@keyframes bannerblink{ 50%{opacity:.15} }
+.banner .panel{
+  background:rgba(28,36,26,.06);
+  border:2px solid rgba(28,36,26,.5);
+  border-radius:8px; padding:14px 16px;
+}
+
+/* Screen-wide flash on a mistake */
+.lcd.flash{ animation:flash .4s steps(1) 2; }
+@keyframes flash{ 50%{ filter:invert(1); } }
+
+/* ---- Physical controls ---- */
+.controls{
+  display:grid; grid-template-columns:1fr 1fr; gap:14px;
+  margin-top:16px;
+}
+.dpad{
+  font-family:inherit; font-weight:bold;
+  font-size:22px; color:#e9eedb;
+  background:linear-gradient(180deg,#454b3b,#2c3026);
+  border:1px solid #1b1e17; border-radius:14px;
+  padding:18px 0; cursor:pointer;
+  box-shadow:inset 0 2px 0 rgba(255,255,255,.10), 0 4px 7px rgba(0,0,0,.45);
+  display:flex; flex-direction:column; align-items:center; gap:3px;
+  touch-action:manipulation;
+}
+.dpad small{ font-size:9px; font-weight:normal; letter-spacing:1px; color:#aeb59c; }
+.dpad:active{ transform:translateY(2px); box-shadow:inset 0 2px 5px rgba(0,0,0,.5); }
+.hint{
+  text-align:center; margin-top:12px; font-size:11px; letter-spacing:1px;
+  color:#8d937e;
+}
+</style>
+</head>
+
+<body>
+<!-- ----------------------------------------------------------------------
+     2. MARKUP
+     ---------------------------------------------------------------------- -->
+<div class="device">
+
+  <div class="brandbar">
+    <div class="brand">OCTOPUS<small>LCD &nbsp;TREASURE&nbsp; DIVER</small></div>
+    <button class="sysbtn" id="muteBtn" aria-label="Toggle sound">♪ ON</button>
+  </div>
+
+  <div class="screen">
+    <div class="lcd" id="lcd">
+      <!-- faint always-printed scene lines -->
+      <div class="deco surface"></div>
+      <div class="deco seabed"></div>
+
+      <!-- static scene sprites (boat, octopus, chest) injected by JS -->
+      <!-- dynamic ghost/lit sprites (diver slots, tentacle segments) injected by JS -->
+
+      <!-- HUD -->
+      <div class="hud">
+        <div class="row">
+          <span>SCORE <span id="score">0000</span></span>
+          <span>HI <span id="hi">0000</span></span>
+        </div>
+        <div class="lives" id="lives"></div>
+        <div class="miss" id="miss">MISS!</div>
+      </div>
+
+      <!-- Centre banner (start / game over) -->
+      <div class="banner" id="banner">
+        <div class="panel">
+          <h1>OCTOPUS</h1>
+          <p id="bannerText">DIVE FOR TREASURE!<br>AVOID THE TENTACLES.</p>
+          <p class="blink" id="bannerCta">▶ PRESS RIGHT / TAP TO DIVE</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Touch / click controls (also reflect the keyboard arrows) -->
+  <div class="controls">
+    <button class="dpad" id="leftBtn">◀<small>UP TO BOAT</small></button>
+    <button class="dpad" id="rightBtn">▶<small>DOWN TO CHEST</small></button>
+  </div>
+  <div class="hint">◀ / ▶ ARROW KEYS &nbsp;•&nbsp; TAP BUTTONS ON MOBILE</div>
+</div>
+
+<script>
+"use strict";
+/* ----------------------------------------------------------------------
+   3. SCRIPT
+   ---------------------------------------------------------------------- */
+
+/* ===== 3a. Config & constants ======================================== */
+
+// localStorage keys
+const LS_HI    = "octopus_highscore";
+const LS_MUTE  = "octopus_muted";
+
+// Game states
+const START = "START", PLAYING = "PLAYING", GAMEOVER = "GAMEOVER";
+
+// The diver's fixed path, surface (boat) -> sea floor (chest).
+// Coordinates are percentages within the LCD. Movement only ever snaps
+// between these slots — never in-between — just like the real handheld.
+// Danger cells (even indices) alternate with SAFE rest cells (odd indices),
+// giving the classic "wait on a safe spot, then dart past the tentacle"
+// rhythm rather than an unforgiving continuous dash.
+const PATH = [
+  {x:14, y:14},  // 0  boat / surface     (safe)
+  {x:15, y:24},  // 1  rest               (safe)
+  {x:17, y:34},  // 2  DANGER
+  {x:19, y:44},  // 3  rest               (safe)
+  {x:22, y:54},  // 4  DANGER
+  {x:26, y:63},  // 5  rest               (safe)
+  {x:32, y:72},  // 6  DANGER
+  {x:41, y:79},  // 7  rest               (safe)
+  {x:52, y:83},  // 8  DANGER
+  {x:66, y:84},  // 9  treasure chest     (safe)
+];
+const LAST = PATH.length - 1;     // index of the chest slot
+
+// Octopus body centre — tentacles grow from here toward the path.
+const OCTO = {x:55, y:44};
+
+// Tentacle reach animation. Each tick we read the next value; the number
+// is how many segments are extended. The tip reaches its target path slot
+// (and becomes deadly) only when fully extended (== SEGS).
+const SEGS = 3;
+const FRAMES = [0,1,2,3,3,2,1,0,0,0,0,0,0,0]; // deadly on the two "3"s
+const DEADLY = SEGS;
+
+// Four tentacles, each guarding one path slot, phase-shifted so the
+// danger travels like a wave you must time your dive against.
+const TENTACLES = [
+  { target:2, phase:0  },
+  { target:4, phase:3  },
+  { target:6, phase:7  },
+  { target:8, phase:10 },
+];
+
+// Speed: tick interval shrinks as you complete rounds (score climbs).
+const BASE_MS = 540, MIN_MS = 170, STEP_MS = 26;
+
+// Scoring & lives
+const POINTS_PER_RUN = 10;
+const START_LIVES = 3;
+const INVULN_MS = 950;           // brief safe/blink window after a miss
+
+/* ===== 3b. Mutable state ============================================= */
+
+let state   = START;
+let score   = 0;
+let hi      = loadHi();
+let lives   = START_LIVES;
+let rounds  = 0;                 // completed treasure runs -> difficulty
+let diver   = 0;                 // current path index
+let hasTreasure = false;
+let tick    = 0;                 // global frame counter
+let invulnUntil = 0;             // timestamp; diver is safe & blinking until then
+let muted   = loadMuted();
+
+/* ===== 3c. SVG sprite art (monochrome, fill = currentColor) ========= */
+
+const SVG = {
+  diver:`<svg viewBox="0 0 24 24"><g fill="currentColor">
+      <circle cx="12" cy="5" r="3"/>
+      <rect x="9" y="8" width="6" height="8" rx="2.4"/>
+      <rect x="4.5" y="9" width="5" height="2" rx="1"/>
+      <rect x="14.5" y="9" width="5" height="2" rx="1"/>
+      <path d="M8 15.5 L5.5 21 L10 18.5 Z"/>
+      <path d="M16 15.5 L18.5 21 L14 18.5 Z"/></g></svg>`,
+
+  octopus:`<svg viewBox="0 0 48 40"><g fill="currentColor">
+      <path d="M24 3 C12 3 7 11 7 20 L7 27 C7 29.4 9.6 29.4 10.6 27 L12.6 22.5
+               C13.6 25.6 15.8 25.6 16.8 22.5 L18.8 28 C19.8 31 22 31 23 28
+               L24 22.5 L25 28 C26 31 28.2 31 29.2 28 L31.2 22.5
+               C32.2 25.6 34.4 25.6 35.4 22.5 L37.4 27 C38.4 29.4 41 29.4 41 27
+               L41 20 C41 11 36 3 24 3 Z"/></g>
+      <circle cx="19" cy="16" r="2.6" style="fill:var(--lcd)"/>
+      <circle cx="29" cy="16" r="2.6" style="fill:var(--lcd)"/>
+      <circle cx="19" cy="16" r="1.1" fill="currentColor"/>
+      <circle cx="29" cy="16" r="1.1" fill="currentColor"/></svg>`,
+
+  boat:`<svg viewBox="0 0 30 20"><g fill="currentColor">
+      <path d="M2 11 L28 11 L24 17 L6 17 Z"/>
+      <rect x="14" y="2" width="2" height="9"/>
+      <path d="M16 3 L24 10.5 L16 10.5 Z"/></g></svg>`,
+
+  chest:`<svg viewBox="0 0 24 20"><g fill="currentColor">
+      <path d="M3 9 Q12 2.5 21 9 L21 10 L3 10 Z"/>
+      <rect x="3" y="10" width="18" height="8" rx="1"/>
+      <rect x="11" y="11.5" width="2" height="4" style="fill:var(--lcd)"/></g></svg>`,
+
+  gem:`<svg viewBox="0 0 12 12"><g fill="currentColor">
+      <path d="M6 1 L10.5 5 L6 11 L1.5 5 Z"/>
+      <path d="M6 1 L6 11" stroke="var(--lcd)" stroke-width="0.7"/></g></svg>`,
+
+  seg:`<svg viewBox="0 0 12 12"><circle cx="6" cy="6" r="5" fill="currentColor"/></svg>`,
+};
+
+/* ===== 3d. Build the scene (run once) =============================== */
+
+const lcd       = document.getElementById("lcd");
+const banner    = document.getElementById("banner");
+const bannerTxt = document.getElementById("bannerText");
+const bannerCta = document.getElementById("bannerCta");
+const scoreEl   = document.getElementById("score");
+const hiEl      = document.getElementById("hi");
+const livesEl   = document.getElementById("lives");
+const missEl    = document.getElementById("miss");
+const muteBtn   = document.getElementById("muteBtn");
+
+// Helper: create a positioned sprite element.
+function makeSprite(cls, svg, x, y, sizePct){
+  const el = document.createElement("div");
+  el.className = "sprite " + cls;
+  el.innerHTML = svg;
+  el.style.left   = x + "%";
+  el.style.top    = y + "%";
+  el.style.width  = sizePct + "%";
+  el.style.height = "auto";
+  lcd.appendChild(el);
+  return el;
+}
+
+// Static scene objects — drawn behind everything else.
+makeSprite("solid", SVG.boat,  PATH[0].x, PATH[0].y - 7, 15);
+makeSprite("solid", SVG.octopus, OCTO.x, OCTO.y, 32);
+makeSprite("solid", SVG.chest, PATH[LAST].x + 9, PATH[LAST].y + 1, 14);
+
+// One diver sprite per path slot. Only the active one lights up — this is
+// exactly how the original printed every position and lit one at a time.
+const diverSlots = PATH.map((p, i) => {
+  const el = makeSprite("diverGhost", SVG.diver, p.x, p.y, 9);
+  if (i === 0) el.classList.add("faint");  // hint the start slot at the boat
+  return el;
+});
+
+// The treasure the diver carries home (repositioned to the diver each frame).
+const gemEl = makeSprite("ghost", SVG.gem, PATH[0].x, PATH[0].y, 4.5);
+gemEl.style.opacity = "0";
+
+// Tentacle segments. For each tentacle we precompute SEGS dot positions
+// interpolated from a base near the octopus out to its target path slot,
+// so the tip lands exactly on the slot it guards.
+const tentacleSegs = TENTACLES.map(t => {
+  const tip  = PATH[t.target];
+  const base = { x: OCTO.x + (tip.x - OCTO.x) * 0.30,
+                 y: OCTO.y + (tip.y - OCTO.y) * 0.30 };
+  const segs = [];
+  for (let i = 0; i < SEGS; i++){
+    const f = (i + 1) / SEGS;                       // last seg sits on the slot
+    const x = base.x + (tip.x - base.x) * f;
+    const y = base.y + (tip.y - base.y) * f;
+    segs.push(makeSprite("ghost", SVG.seg, x, y, 4.6));
+  }
+  return segs;
+});
+
+// Build the three life icons.
+for (let i = 0; i < START_LIVES; i++){
+  const d = document.createElement("div");
+  d.className = "lifeIcon";
+  d.innerHTML = SVG.diver;
+  livesEl.appendChild(d);
+}
+const lifeIcons = [...livesEl.children];
+
+/* ===== 3e. localStorage helpers (guarded for private mode) ========== */
+
+function loadHi(){ try { return parseInt(localStorage.getItem(LS_HI)) || 0; } catch { return 0; } }
+function saveHi(v){ try { localStorage.setItem(LS_HI, v); } catch {} }
+function loadMuted(){ try { return localStorage.getItem(LS_MUTE) === "1"; } catch { return false; } }
+function saveMuted(v){ try { localStorage.setItem(LS_MUTE, v ? "1" : "0"); } catch {} }
+
+/* ===== 3f. Audio — tiny Web Audio "beeper" ========================== */
+
+let actx = null;
+function ensureAudio(){
+  if (!actx){
+    try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch {}
+  }
+  if (actx && actx.state === "suspended") actx.resume();
+}
+function beep(freq, dur, type){
+  if (muted || !actx) return;
+  const t = actx.currentTime;
+  const osc = actx.createOscillator();
+  const g   = actx.createGain();
+  osc.type = type || "square";
+  osc.frequency.setValueAtTime(freq, t);
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.18, t + 0.01);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  osc.connect(g).connect(actx.destination);
+  osc.start(t); osc.stop(t + dur + 0.02);
+}
+const sndMove  = () => beep(440, 0.05, "square");
+const sndGrab  = () => { beep(660,0.07,"square"); };
+const sndScore = () => { beep(660,0.08,"square"); setTimeout(()=>beep(990,0.12,"square"),80); };
+const sndHit   = () => beep(110, 0.30, "sawtooth");
+const sndOver  = () => { beep(330,0.15,"square"); setTimeout(()=>beep(220,0.18,"square"),130);
+                         setTimeout(()=>beep(130,0.30,"square"),300); };
+
+/* ===== 3g. Tentacle reach & collision =============================== */
+
+// How many segments tentacle t shows on the current tick.
+function reachFor(t){ return FRAMES[(tick + t.phase) % FRAMES.length]; }
+
+// Is the diver's current slot currently pierced by a fully-extended tip?
+function diverInDanger(){
+  for (const t of TENTACLES){
+    if (t.target === diver && reachFor(t) === DEADLY) return true;
+  }
+  return false;
+}
+
+/* ===== 3h. Rendering ================================================ */
+
+function pad(n){ return String(n).padStart(4, "0"); }
+
+function render(){
+  // Diver: light the active slot. Blink it while invulnerable after a miss.
+  const blinkHidden = (state === PLAYING) && (Date.now() < invulnUntil) && (tick % 2 === 0);
+  diverSlots.forEach((el, i) => {
+    const active = (state === PLAYING || state === GAMEOVER) && i === diver && !blinkHidden;
+    el.classList.toggle("active", active);
+  });
+
+  // Carried treasure rides along with the diver.
+  if (hasTreasure && state === PLAYING && !blinkHidden){
+    const p = PATH[diver];
+    gemEl.style.left = (p.x + 4) + "%";
+    gemEl.style.top  = (p.y - 5) + "%";
+    gemEl.style.opacity = "1";
+  } else {
+    gemEl.style.opacity = "0";
+  }
+
+  // Tentacles: light the extended segments.
+  tentacleSegs.forEach((segs, ti) => {
+    const reach = (state === START) ? 0 : reachFor(TENTACLES[ti]);
+    segs.forEach((el, i) => el.classList.toggle("lit", i < reach));
+  });
+
+  // HUD
+  scoreEl.textContent = pad(score);
+  hiEl.textContent    = pad(hi);
+  lifeIcons.forEach((el, i) => el.classList.toggle("spent", i >= lives));
+}
+
+/* ===== 3i. Game flow: miss, score, game-over, start ================= */
+
+function flashScreen(){
+  lcd.classList.remove("flash"); void lcd.offsetWidth; lcd.classList.add("flash");
+  missEl.classList.remove("show"); void missEl.offsetWidth; missEl.classList.add("show");
+}
+
+function loseLife(){
+  lives--;
+  hasTreasure = false;
+  sndHit();
+  flashScreen();
+  if (lives <= 0){
+    gameOver();
+  } else {
+    diver = 0;                       // back to the boat
+    invulnUntil = Date.now() + INVULN_MS;
+  }
+  render();
+}
+
+function completeRun(){
+  rounds++;
+  score += POINTS_PER_RUN;
+  hasTreasure = false;
+  if (score > hi){ hi = score; saveHi(hi); }
+  sndScore();
+  render();
+}
+
+function gameOver(){
+  state = GAMEOVER;
+  if (score > hi){ hi = score; saveHi(hi); }
+  sndOver();
+  bannerTxt.innerHTML = "GAME OVER<br>SCORE " + pad(score);
+  bannerCta.textContent = "▶ PRESS RIGHT / TAP TO RETRY";
+  banner.classList.remove("hidden");
+  render();
+}
+
+function startGame(){
+  ensureAudio();
+  state = PLAYING;
+  score = 0; lives = START_LIVES; rounds = 0;
+  diver = 0; hasTreasure = false; tick = 0; invulnUntil = 0;
+  banner.classList.add("hidden");
+  render();
+}
+
+/* ===== 3j. Movement (discrete, one slot at a time) ================== */
+
+function move(dir){
+  // Any control press starts / restarts from a banner state.
+  if (state !== PLAYING){ startGame(); return; }
+
+  const next = Math.min(LAST, Math.max(0, diver + dir));
+  if (next === diver) return;        // already at an end of the path
+  diver = next;
+  sndMove();
+
+  // Auto-grab treasure at the chest.
+  if (diver === LAST && !hasTreasure){ hasTreasure = true; sndGrab(); }
+  // Score for a safe return to the boat carrying treasure.
+  if (diver === 0 && hasTreasure){ completeRun(); }
+
+  // A tentacle may already be occupying the slot you stepped into.
+  if (Date.now() >= invulnUntil && diverInDanger()){ loseLife(); return; }
+  render();
+}
+
+/* ===== 3k. The game loop (fixed-step, self-scheduling) ============== */
+
+// Interval shrinks with completed rounds so play speeds up with the score.
+function intervalMs(){ return Math.max(MIN_MS, BASE_MS - rounds * STEP_MS); }
+
+function step(){
+  if (state === PLAYING){
+    tick++;
+    // Tentacles just advanced — check if one closed on a stationary diver.
+    if (Date.now() >= invulnUntil && diverInDanger()){ loseLife(); }
+    else { render(); }
+  }
+  setTimeout(step, intervalMs());
+}
+
+/* ===== 3l. Input: keyboard + touch + click ========================= */
+
+addEventListener("keydown", e => {
+  if (e.key === "ArrowRight"){ e.preventDefault(); move(+1); }
+  else if (e.key === "ArrowLeft"){ e.preventDefault(); move(-1); }
+  else if (e.key === " " || e.key === "Enter"){ e.preventDefault(); if (state!==PLAYING) startGame(); }
+}, {passive:false});
+
+function bindPress(el, fn){
+  // Use touchstart for snappy mobile response, click for desktop/mouse.
+  let touched = false;
+  el.addEventListener("touchstart", e => { touched = true; e.preventDefault(); fn(); }, {passive:false});
+  el.addEventListener("click", () => { if (touched){ touched = false; return; } fn(); });
+}
+bindPress(document.getElementById("leftBtn"),  () => move(-1));
+bindPress(document.getElementById("rightBtn"), () => move(+1));
+bindPress(banner, () => { if (state !== PLAYING) startGame(); });
+
+// Sound toggle
+function refreshMuteBtn(){ muteBtn.textContent = muted ? "♪ OFF" : "♪ ON"; }
+muteBtn.addEventListener("click", () => {
+  muted = !muted; saveMuted(muted); refreshMuteBtn();
+  if (!muted){ ensureAudio(); beep(660, 0.06, "square"); }
+});
+
+/* ===== 3m. Boot ===================================================== */
+
+refreshMuteBtn();
+render();
+step();   // start the loop (idles harmlessly until the player dives)
+</script>
+</body>
+</html>
