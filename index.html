@@ -26,10 +26,16 @@
    ---------------------------------------------------------------------- */
 
 :root{
-  --lcd:        #aab79a;   /* light green-grey LCD background        */
-  --lcd-edge:   #95a384;   /* slightly darker LCD toward the edges   */
+  --lcd:        #d9d6bc;   /* warm cream LCD background (Game&Watch)  */
+  --lcd-edge:   #cdc9a8;   /* slightly darker LCD toward the edges   */
   --seg:        #1c241a;   /* dark "on" segment colour               */
   --ghost:      rgba(28,36,26,0.10); /* faint always-printed segment */
+  /* printed colour scenery (faintly silk-screened on the glass)     */
+  --water:      #5aa0d8;   /* blue wave lines                        */
+  --weed:       #5f8f39;   /* green seaweed                          */
+  --coral:      #d9803a;   /* orange coral                           */
+  --sand:       #9a6a3f;   /* brown seabed                           */
+  --wreck:      #7a4f30;   /* brown sunken ship / boat               */
   --shell:      #3a3f33;   /* handheld plastic body                  */
   --shell-hi:   #4d5443;
   --shell-lo:   #23271f;
@@ -111,12 +117,27 @@ html,body{
 }
 @keyframes flicker{ 0%,97%{opacity:.9} 98%{opacity:.78} 99%{opacity:.95} 100%{opacity:.9} }
 
-/* ---- Scene decorations (always faintly printed) ---- */
+/* ---- Printed colour scenery (always silk-screened on the glass) ---- */
+/* A faint sandy seabed wash and surface line, behind every sprite. */
+.scenewash{
+  position:absolute; inset:0; pointer-events:none;
+  background:
+    /* sandy seabed gradient at the bottom */
+    linear-gradient(180deg, transparent 78%, rgba(154,106,63,.22) 86%, rgba(122,79,48,.34) 100%),
+    /* faint water tint up top */
+    linear-gradient(180deg, rgba(90,160,216,.10) 0 52%, transparent 60%);
+}
 .deco{ position:absolute; color:var(--seg); opacity:.16; pointer-events:none; }
 .surface{ left:0; right:0; top:8%; height:2px;
-  background:repeating-linear-gradient(90deg,var(--seg) 0 8px,transparent 8px 16px); }
+  background:repeating-linear-gradient(90deg,var(--water) 0 8px,transparent 8px 16px);
+  opacity:.5; }
 .seabed{ left:0; right:0; bottom:4%; height:2px;
-  background:repeating-linear-gradient(90deg,var(--seg) 0 5px,transparent 5px 9px); }
+  background:repeating-linear-gradient(90deg,var(--sand) 0 5px,transparent 5px 9px);
+  opacity:.6; }
+
+/* Printed scene sprites (boat, ship, seaweed, coral, waves): faint, behind play */
+.scene{ opacity:.7; pointer-events:none; }
+.scene.faintwater{ opacity:.45; }
 
 /* ---- Generic sprite: fixed position, no smooth movement ---- */
 .sprite{
@@ -165,9 +186,12 @@ html,body{
 
 /* ---- Centre banner for START / GAME OVER ---- */
 .banner{
-  position:absolute; inset:0; display:flex; flex-direction:column;
+  position:absolute; inset:0; z-index:5;
+  display:flex; flex-direction:column;
   align-items:center; justify-content:center; text-align:center;
-  color:var(--seg); padding:8% 10%; gap:8px; cursor:pointer;
+  color:var(--seg); padding:8% 10%; cursor:pointer;
+  /* translucent cream wash mutes the busy scene behind the card */
+  background:rgba(217,214,188,.86);
 }
 .banner.hidden{ display:none; }
 .banner h1{ font-size:clamp(20px,7vw,34px); letter-spacing:4px; }
@@ -175,9 +199,12 @@ html,body{
 .banner .blink{ animation:bannerblink 1s steps(1) infinite; }
 @keyframes bannerblink{ 50%{opacity:.15} }
 .banner .panel{
-  background:rgba(28,36,26,.06);
-  border:2px solid rgba(28,36,26,.5);
-  border-radius:8px; padding:14px 16px;
+  display:flex; flex-direction:column; gap:8px; align-items:center;
+  max-width:88%;
+  background:var(--lcd);
+  border:2px solid rgba(28,36,26,.55);
+  border-radius:8px; padding:16px 18px;
+  box-shadow:0 2px 0 rgba(28,36,26,.15), inset 0 0 0 1px rgba(28,36,26,.12);
 }
 
 /* Screen-wide flash on a mistake */
@@ -221,7 +248,8 @@ html,body{
 
   <div class="screen">
     <div class="lcd" id="lcd">
-      <!-- faint always-printed scene lines -->
+      <!-- faint always-printed water / seabed wash -->
+      <div class="scenewash"></div>
       <div class="deco surface"></div>
       <div class="deco seabed"></div>
 
@@ -335,29 +363,39 @@ let muted   = loadMuted();
 /* ===== 3c. SVG sprite art (monochrome, fill = currentColor) ========= */
 
 const SVG = {
-  diver:`<svg viewBox="0 0 24 24"><g fill="currentColor">
-      <circle cx="12" cy="5" r="3"/>
-      <rect x="9" y="8" width="6" height="8" rx="2.4"/>
-      <rect x="4.5" y="9" width="5" height="2" rx="1"/>
-      <rect x="14.5" y="9" width="5" height="2" rx="1"/>
-      <path d="M8 15.5 L5.5 21 L10 18.5 Z"/>
-      <path d="M16 15.5 L18.5 21 L14 18.5 Z"/></g></svg>`,
+  // Game & Watch round-helmet diver: crosshair visor, torso, arms, flippers.
+  diver:`<svg viewBox="0 0 24 26"><g fill="currentColor">
+      <circle cx="12" cy="6" r="5"/>
+      <rect x="11.4" y="2" width="1.2" height="8" style="fill:var(--lcd)"/>
+      <rect x="8"  y="5.4" width="8" height="1.2" style="fill:var(--lcd)"/>
+      <path d="M8.5 11 L15.5 11 L14 19 L10 19 Z"/>
+      <path d="M8.7 11.5 L4 13.5 L5 15.4 L9.6 13.6 Z"/>
+      <path d="M15.3 11.5 L20 13.5 L19 15.4 L14.4 13.6 Z"/>
+      <path d="M10 19 L5.5 24.5 L10.6 21.6 Z"/>
+      <path d="M14 19 L18.5 24.5 L13.4 21.6 Z"/></g></svg>`,
 
-  octopus:`<svg viewBox="0 0 48 40"><g fill="currentColor">
-      <path d="M24 3 C12 3 7 11 7 20 L7 27 C7 29.4 9.6 29.4 10.6 27 L12.6 22.5
-               C13.6 25.6 15.8 25.6 16.8 22.5 L18.8 28 C19.8 31 22 31 23 28
-               L24 22.5 L25 28 C26 31 28.2 31 29.2 28 L31.2 22.5
-               C32.2 25.6 34.4 25.6 35.4 22.5 L37.4 27 C38.4 29.4 41 29.4 41 27
-               L41 20 C41 11 36 3 24 3 Z"/></g>
-      <circle cx="19" cy="16" r="2.6" style="fill:var(--lcd)"/>
-      <circle cx="29" cy="16" r="2.6" style="fill:var(--lcd)"/>
-      <circle cx="19" cy="16" r="1.1" fill="currentColor"/>
-      <circle cx="29" cy="16" r="1.1" fill="currentColor"/></svg>`,
-
-  boat:`<svg viewBox="0 0 30 20"><g fill="currentColor">
-      <path d="M2 11 L28 11 L24 17 L6 17 Z"/>
-      <rect x="14" y="2" width="2" height="9"/>
-      <path d="M16 3 L24 10.5 L16 10.5 Z"/></g></svg>`,
+  // Big bulbous octopus with eyes and curling, suckered tentacles.
+  octopus:`<svg viewBox="0 0 72 60"><g fill="currentColor">
+      <path d="M36 4 C21 4 12 14 12 27 C12 33 14 38 19 41
+               C14 42 10 45 8 49 C6 53 11 55 14 51 C13 47 17 45 20 45
+               L23 51 C24.5 54 28 54 29.5 51 L31.5 45.5
+               L33.5 51 C35 54 38.5 54 40 51 L42 45.5
+               L44 51 C45.5 54 49 54 50.5 51 C53.5 45 58 45 57 51
+               C60 55 65 53 63 49 C61 45 57 42 52 41 C57 38 60 33 60 27
+               C60 14 51 4 36 4 Z"/>
+      <path d="M19 41 C9 44 3 50 8 55 C12 58 15 53 12 50"
+            fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>
+      <path d="M52 41 C63 44 69 50 64 55 C60 58 57 53 60 50"
+            fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round"/></g>
+      <circle cx="28" cy="24" r="5.6" style="fill:var(--lcd)"/>
+      <circle cx="44" cy="24" r="5.6" style="fill:var(--lcd)"/>
+      <circle cx="28" cy="24" r="2.4" fill="currentColor"/>
+      <circle cx="44" cy="24" r="2.4" fill="currentColor"/>
+      <g style="fill:var(--lcd)">
+        <circle cx="16" cy="48" r="1.2"/><circle cx="22" cy="49.5" r="1.2"/>
+        <circle cx="31" cy="49" r="1.2"/><circle cx="40" cy="49" r="1.2"/>
+        <circle cx="49" cy="49.5" r="1.2"/><circle cx="55" cy="48" r="1.2"/>
+        <circle cx="10" cy="52" r="1"/><circle cx="62" cy="52" r="1"/></g></svg>`,
 
   chest:`<svg viewBox="0 0 24 20"><g fill="currentColor">
       <path d="M3 9 Q12 2.5 21 9 L21 10 L3 10 Z"/>
@@ -369,6 +407,29 @@ const SVG = {
       <path d="M6 1 L6 11" stroke="var(--lcd)" stroke-width="0.7"/></g></svg>`,
 
   seg:`<svg viewBox="0 0 12 12"><circle cx="6" cy="6" r="5" fill="currentColor"/></svg>`,
+
+  /* ---- Printed colour scenery (explicit fills, not currentColor) ---- */
+  boat:`<svg viewBox="0 0 44 22"><g fill="var(--wreck)">
+      <path d="M2 12 L42 12 L36 20 L8 20 Z"/>
+      <rect x="20" y="2" width="2.2" height="10"/>
+      <path d="M22.5 3 L34 11.5 L22.5 11.5 Z"/></g></svg>`,
+
+  ship:`<svg viewBox="0 0 64 42"><g fill="var(--wreck)">
+      <path d="M3 22 L54 14 L50 36 L11 36 Z"/>
+      <g fill="none" stroke="var(--wreck)" stroke-width="2.4" stroke-linecap="round">
+        <path d="M16 22 L15 6"/><path d="M26 20 L26 4"/><path d="M36 18 L37 5"/>
+        <path d="M15 6 L37 5"/></g></g></svg>`,
+
+  weed:`<svg viewBox="0 0 18 34"><g fill="none" stroke="var(--weed)" stroke-width="2.6" stroke-linecap="round">
+      <path d="M9 34 C4 27 13 23 7 16 C2 10 12 6 8 1"/>
+      <path d="M9 34 C13 27 5 23 11 14"/></g></svg>`,
+
+  coral:`<svg viewBox="0 0 22 18"><g fill="none" stroke="var(--coral)" stroke-width="2.4" stroke-linecap="round">
+      <path d="M11 18 L11 4"/><path d="M11 12 L5 6"/><path d="M11 11 L17 5"/>
+      <path d="M5 6 L4 2"/><path d="M17 5 L18 1"/><path d="M11 4 L11 1"/></g></svg>`,
+
+  wave:`<svg viewBox="0 0 26 8"><path d="M1 5 Q4.5 1 8 5 T15 5 T22 5 T29 5"
+      fill="none" stroke="var(--water)" stroke-width="2" stroke-linecap="round"/></svg>`,
 };
 
 /* ===== 3d. Build the scene (run once) =============================== */
@@ -396,9 +457,27 @@ function makeSprite(cls, svg, x, y, sizePct){
   return el;
 }
 
-// Static scene objects — drawn behind everything else.
-makeSprite("solid", SVG.boat,  PATH[0].x, PATH[0].y - 7, 15);
-makeSprite("solid", SVG.octopus, OCTO.x, OCTO.y, 32);
+// Printed colour scenery — silk-screened on the glass, behind every sprite.
+function buildScene(){
+  // Wavy blue water lines scattered across the upper sea.
+  const waves = [
+    [30,18],[46,15],[62,20],[78,17],[40,30],[58,33],[74,29],[88,24],
+    [52,46],[70,44],[84,40],[64,55],[80,52],
+  ];
+  waves.forEach(([x,y]) => makeSprite("scene faintwater", SVG.wave, x, y, 11));
+  // Seaweed and coral clumps along the seabed.
+  makeSprite("scene", SVG.weed,  8,  90, 7);
+  makeSprite("scene", SVG.weed,  34, 92, 6);
+  makeSprite("scene", SVG.coral, 20, 93, 8);
+  makeSprite("scene", SVG.coral, 47, 94, 7);
+  // Sunken ship wreck near the treasure, bottom-right.
+  makeSprite("scene", SVG.ship, 84, 86, 26);
+}
+buildScene();
+
+// Static scene objects — boat (brown) at the surface, big octopus, chest.
+makeSprite("scene", SVG.boat,  PATH[0].x, PATH[0].y - 7, 20);
+makeSprite("solid", SVG.octopus, OCTO.x + 6, OCTO.y - 2, 46);
 makeSprite("solid", SVG.chest, PATH[LAST].x + 9, PATH[LAST].y + 1, 14);
 
 // One diver sprite per path slot. Only the active one lights up — this is
